@@ -630,13 +630,23 @@ int main(void)
     PID_Config_Init();          /* PID控制器 */
     LoadConfig();               /* 加载掉电保存的配置 */
     
+    /* 独立看门狗：LSI 40kHz，预分频64，重装载625 → 1秒超时 */
+    RCC_LSICmd(ENABLE);
+    while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET);
+    IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
+    IWDG_SetPrescaler(IWDG_Prescaler_64);
+    IWDG_SetReload(625);
+    IWDG_ReloadCounter();
+    IWDG_Enable();
+    
     /* 开机默认状态 */
     PID_SetSetpoint(&g_pid, targetTemp);
     
     /* 开机画面 */
     IIC_OLED_Clear();
     IIC_OLED_Show_Str(16, 2, "System Start", 16);
-    delay_ms(1000);
+    IWDG_ReloadCounter();   // 喂狗，刷新1秒倒计时
+    delay_ms(500);
     IIC_OLED_Clear();
     
     Fan_SetGear(manualGear);
@@ -645,6 +655,7 @@ int main(void)
     /* 主循环 */
     while (1)
     {
+        IWDG_ReloadCounter();           /* 喂狗，防止看门狗复位 */
         Read_Temperature();             /* 读取温度 */
         BT_Connection_Check();          /* 检测蓝牙连接状态变化 */
         Key_Process();                  /* 处理按键（调用key.c扫描） */
