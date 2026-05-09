@@ -286,76 +286,110 @@ static uint8_t IsAutoMode(void)
  *         第一行：T:温度 C  G:档位（自动模式不显示档位）
  *         第二行：M:模式  S:目标温度（手动模式不显示目标温度）
  */
+/**
+ * @brief  OLED显示更新（局部刷新，避免闪烁）
+ *         第一行：T:温度 C  G:档位（自动模式不显示档位）
+ *         第二行：M:模式  S:目标温度（手动模式不显示目标温度）
+ *
+ * @note   修正版：第一行和第二行使用独立的状态记录变量，
+ *         避免一行刷新后更新共享变量导致另一行条件判断失败
+ */
 static void OLED_Update(void)
 {
-    /* 静态变量：记录上次显示的内容，只有变化时才刷新 */
+    /* 静态变量：第一行专用的状态记录，只有内容变化时才刷新 */
     static float        lastTemp      = -99.0f;
     static uint8_t      lastGear      = 255;
+    static uint8_t      lastErrorFlag = 0;
+    static uint8_t      lastIsAuto    = 255;    /* 上一次是否为自动模式(0/1)，255表示初始值 */
+
+    /* 静态变量：第二行专用的状态记录，独立于第一行，避免互相干扰 */
     static SystemMode_t lastMode      = 255;
     static BTWorkMode_t lastBTMode    = 255;
     static float        lastTarget    = -99.0f;
-    static uint8_t      lastErrorFlag = 0;
-    
+
     char buf[24];
-    uint8_t isAuto = IsAutoMode();
-    
-    /* 第一行：温度 + 档位 */
-    if (currentTemp != lastTemp || manualGear != lastGear || 
-        tem_error_flag != lastErrorFlag || sysMode != lastMode || 
-        btWorkMode != lastBTMode)
+    uint8_t isAuto = IsAutoMode();              /* 判断当前是否为自动模式 */
+
+    /*========================================================================
+     * 第一行刷新：温度 + 档位
+     * 刷新条件：当前温度/档位/错误状态/自动模式状态中任一发生变化
+     *========================================================================*/
+    if (currentTemp != lastTemp || manualGear != lastGear ||
+        tem_error_flag != lastErrorFlag || isAuto != lastIsAuto)
     {
-        /* 清除第2-3页 */
+        /* 清除第2-3页（第一行显示区域） */
         IIC_OLED_Set_Pos(0, 2);
         for (uint8_t i = 0; i < 128; i++) IIC_OLED_WR_Byte(0, OLED_DATA);
         IIC_OLED_Set_Pos(0, 3);
         for (uint8_t i = 0; i < 128; i++) IIC_OLED_WR_Byte(0, OLED_DATA);
-        
+
         /* 根据故障状态和模式决定显示内容 */
         if (tem_error_flag)
+        {
+            /* 传感器故障：显示ERROR，自动模式不显示档位 */
             sprintf(buf, isAuto ? "T:ERROR" : "T:ERROR  G:%d", manualGear);
+        }
         else
+        {
+            /* 正常：显示温度，自动模式不显示档位 */
             sprintf(buf, isAuto ? "T:%.1f C" : "T:%.1f C  G:%d", currentTemp, manualGear);
-        
+        }
+
         IIC_OLED_Show_Str(0, 2, buf, 16);
-        
-        /* 更新记录 */
+
+        /* 更新第一行专用记录变量 */
         lastTemp      = currentTemp;
         lastGear      = manualGear;
         lastErrorFlag = tem_error_flag;
-        lastBTMode    = btWorkMode;
+        lastIsAuto    = isAuto;
     }
-    
-    /* 第二行：模式 + 目标温度 */
-    if (sysMode != lastMode || targetTemp != lastTarget || btWorkMode != lastBTMode)
+
+    /*========================================================================
+     * 第二行刷新：模式 + 目标温度
+     * 刷新条件：系统模式/蓝牙子模式/目标温度中任一发生变化
+     * 注意：这里使用独立的last变量，不受第一行刷新影响
+     *========================================================================*/
+    if (sysMode != lastMode || btWorkMode != lastBTMode || targetTemp != lastTarget)
     {
-        /* 清除第4-5页 */
+        /* 清除第4-5页（第二行显示区域） */
         IIC_OLED_Set_Pos(0, 4);
         for (uint8_t i = 0; i < 128; i++) IIC_OLED_WR_Byte(0, OLED_DATA);
         IIC_OLED_Set_Pos(0, 5);
         for (uint8_t i = 0; i < 128; i++) IIC_OLED_WR_Byte(0, OLED_DATA);
-        
+
         /* 根据系统模式显示不同内容 */
         switch (sysMode)
         {
             case MODE_AUTO:
+                /* 普通自动模式：显示"auto"和目标温度 */
                 sprintf(buf, "M:auto  S:%.1f", targetTemp);
                 break;
+
             case MODE_MANUAL:
+                /* 普通手动模式：只显示"manual" */
                 sprintf(buf, "M:manual");
                 break;
+
             case MODE_BLUETOOTH:
+                /* 蓝牙模式：根据子模式显示不同内容 */
                 if (btWorkMode == WORK_MODE_AUTO)
+                {
+                    /* 蓝牙自动：显示"BT_auto"和目标温度 */
                     sprintf(buf, "M:BT_auto S:%.1f", targetTemp);
+                }
                 else
+                {
+                    /* 蓝牙手动：只显示"BT_manual" */
                     sprintf(buf, "M:BT_manual");
+                }
                 break;
         }
         IIC_OLED_Show_Str(0, 4, buf, 16);
-        
-        /* 更新记录 */
+
+        /* 更新第二行专用记录变量（独立于第一行的记录变量） */
         lastMode   = sysMode;
-        lastTarget = targetTemp;
         lastBTMode = btWorkMode;
+        lastTarget = targetTemp;
     }
 }
 
